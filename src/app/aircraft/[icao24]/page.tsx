@@ -4,12 +4,16 @@ import Link from "next/link";
 import { AircraftDetailsHeader } from "@/components/aircraft/AircraftDetailsHeader";
 import { AircraftDetailsMessage } from "@/components/aircraft/AircraftDetailsMessage";
 import { AircraftPositionMap } from "@/components/aircraft/AircraftPositionMap";
+import { AircraftProfileCard } from "@/components/aircraft/AircraftProfileCard";
 import { AircraftStateDetails } from "@/components/aircraft/AircraftStateDetails";
 import { Button } from "@/components/ui/button";
+import { getAircraftProfileByIcao24 } from "@/services/aircraft-profile";
+import { isOpenSkyRequestError } from "@/services/opensky-errors";
 import {
   getAircraftStateByIcao24,
   normaliseIcao24Param,
 } from "@/services/opensky";
+import type { AircraftState } from "@/types/aircraft";
 
 type AircraftDetailsPageProps = {
   params: Promise<{
@@ -50,33 +54,22 @@ export default async function AircraftDetailsPage({
     );
   }
 
-  let state;
+  const profile = await getAircraftProfileByIcao24(normalized);
+
+  let liveError = false;
+  let state: AircraftState | null = null;
+
   try {
     state = await getAircraftStateByIcao24(normalized);
-  } catch {
-    return (
-      <main className="min-h-screen px-6 py-10">
-        <div className="mx-auto max-w-7xl space-y-6">
-          <AircraftDetailsMessage variant="error" />
-        </div>
-      </main>
-    );
-  }
-
-  if (!state) {
-    return (
-      <main className="min-h-screen px-6 py-10">
-        <div className="mx-auto max-w-7xl space-y-6">
-          <AircraftDetailsMessage
-            variant="not_visible"
-            icao24={normalized}
-          />
-        </div>
-      </main>
-    );
+  } catch (error) {
+    liveError = true;
+    if (!isOpenSkyRequestError(error)) {
+      console.error("Unexpected aircraft details fetch error:", error);
+    }
   }
 
   const position =
+    state &&
     state.latitude !== null &&
     state.longitude !== null &&
     Number.isFinite(state.latitude) &&
@@ -96,27 +89,45 @@ export default async function AircraftDetailsPage({
           </Button>
         </div>
 
-        <AircraftDetailsHeader state={state} />
+        <AircraftProfileCard profile={profile} />
 
-        {position ? (
-          <section className="space-y-2">
-            <h2 className="text-sm font-medium text-muted-foreground">
-              Last reported position
-            </h2>
-            <AircraftPositionMap
-              latitude={position.lat}
-              longitude={position.lng}
-            />
-          </section>
-        ) : null}
+        {liveError ? (
+          <AircraftDetailsMessage variant="error" />
+        ) : state === null ? (
+          <AircraftDetailsMessage
+            variant="not_visible"
+            icao24={normalized}
+          />
+        ) : (
+          <>
+            <AircraftDetailsHeader state={state} />
 
-        <AircraftStateDetails state={state} />
+            {position ? (
+              <section className="space-y-2">
+                <h2 className="text-sm font-medium text-muted-foreground">
+                  Live position (OpenSky)
+                </h2>
+                <AircraftPositionMap
+                  latitude={position.lat}
+                  longitude={position.lng}
+                />
+              </section>
+            ) : null}
 
-        <p className="max-w-3xl text-xs text-muted-foreground">
-          Data reflects the latest state vector returned by OpenSky. It does not
-          include commercial schedules, gates, terminals, or passenger
-          information.
-        </p>
+            <section className="space-y-2">
+              <h2 className="text-sm font-medium text-muted-foreground">
+                Live state (OpenSky)
+              </h2>
+              <AircraftStateDetails state={state} />
+            </section>
+
+            <p className="max-w-3xl text-xs text-muted-foreground">
+              Live position and kinematics reflect the latest state vector
+              returned by OpenSky. They do not include commercial schedules,
+              gates, terminals, or passenger information.
+            </p>
+          </>
+        )}
       </div>
     </main>
   );
