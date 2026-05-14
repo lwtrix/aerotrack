@@ -3,6 +3,7 @@
 import "leaflet/dist/leaflet.css";
 
 import L from "leaflet";
+import Link from "next/link";
 import { useEffect, useRef } from "react";
 import {
   CircleMarker,
@@ -13,14 +14,18 @@ import {
 } from "react-leaflet";
 
 import { USER_MAP_VIEW_RADIUS_MILES } from "@/hooks/useBrowserGeolocation";
+import {
+  formatAircraftAltitudeSummary,
+  formatBooleanStatus,
+  formatCallsign,
+  formatHeading,
+  formatSpeed,
+} from "@/lib/formatting/aircraft";
 import type { AircraftState } from "@/types/aircraft";
 import { MAX_VISIBLE_AIRCRAFT_MARKERS_ON_MAP } from "@/types/live-flights";
 
 const DEFAULT_CENTER: [number, number] = [20, 0];
 const DEFAULT_ZOOM = 3;
-
-const METERS_TO_FEET = 3.280_839_895;
-const MS_TO_KNOTS = 1.943_844_494;
 
 function boundsForRadiusMiles(
   centerLat: number,
@@ -53,36 +58,13 @@ function UserLocationFitOnce({ lat, lng }: { lat: number; lng: number }) {
   return null;
 }
 
-function formatAltitude(aircraft: AircraftState): string {
-  const meters = aircraft.baroAltitude ?? aircraft.geoAltitude;
-  if (meters === null) return "—";
-  const feet = Math.round(meters * METERS_TO_FEET);
-  const source =
-    aircraft.baroAltitude !== null
-      ? "barometric"
-      : aircraft.geoAltitude !== null
-        ? "geometric"
-        : "unknown";
-  return `${feet.toLocaleString()} ft (${Math.round(meters)} m, ${source})`;
-}
-
-function formatSpeed(velocityMs: number | null): string {
-  if (velocityMs === null) return "—";
-  const knots = velocityMs * MS_TO_KNOTS;
-  return `${Math.round(knots)} kt`;
-}
-
-function formatHeading(trueTrack: number | null): string {
-  if (trueTrack === null) return "—";
-  return `${Math.round(trueTrack)}°`;
-}
-
 function AircraftPopupContent({ aircraft }: { aircraft: AircraftState }) {
-  const callsign = aircraft.callsign?.trim() || "—";
-  const onGround = aircraft.onGround ? "Yes" : "No";
+  const callsign = formatCallsign(aircraft.callsign);
+  const onGround = formatBooleanStatus(aircraft.onGround);
+  const href = `/aircraft/${aircraft.icao24.toLowerCase()}`;
 
   return (
-    <div className="min-w-[220px] text-xs leading-snug">
+    <div className="min-w-[220px] space-y-2 text-xs leading-snug">
       <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-muted-foreground">
         <dt>Callsign</dt>
         <dd className="text-foreground">{callsign}</dd>
@@ -91,7 +73,9 @@ function AircraftPopupContent({ aircraft }: { aircraft: AircraftState }) {
         <dt>Country</dt>
         <dd className="text-foreground">{aircraft.originCountry}</dd>
         <dt>Altitude</dt>
-        <dd className="text-foreground">{formatAltitude(aircraft)}</dd>
+        <dd className="text-foreground">
+          {formatAircraftAltitudeSummary(aircraft)}
+        </dd>
         <dt>Speed</dt>
         <dd className="text-foreground">{formatSpeed(aircraft.velocity)}</dd>
         <dt>Heading</dt>
@@ -99,6 +83,12 @@ function AircraftPopupContent({ aircraft }: { aircraft: AircraftState }) {
         <dt>On ground</dt>
         <dd className="text-foreground">{onGround}</dd>
       </dl>
+      <Link
+        href={href}
+        className="inline-block text-primary underline-offset-4 hover:underline"
+      >
+        View aircraft details
+      </Link>
     </div>
   );
 }
