@@ -9,6 +9,8 @@ export type LiveFlightsApiSuccess = {
   count: number;
   updatedAt: string;
   data: AircraftState[];
+  /** Client poll hint (ms). Mock mode uses a shorter interval than live OpenSky. */
+  refreshIntervalMs: number;
 };
 
 export type LiveFlightsApiErrorBody = {

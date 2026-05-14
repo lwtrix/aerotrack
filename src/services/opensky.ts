@@ -1,10 +1,10 @@
 import type { AircraftState } from "@/types/aircraft";
 import {
   OpenSkyRequestError,
+  clampOpenSkyRetryAfterSeconds,
   defaultRetrySecondsForCode,
   isOpenSkyRequestError,
-  parseRetryAfterHeaderSeconds,
-  clampRetryAfterSeconds,
+  parseOpenSkyRetryAfterSecondsFromResponse,
 } from "@/services/opensky-errors";
 
 type OpenSkyResponse = {
@@ -47,10 +47,8 @@ function mergeRetryWithHeader(
   code: Parameters<typeof defaultRetrySecondsForCode>[0],
   response: Response,
 ): number {
-  const fromHeader = parseRetryAfterHeaderSeconds(
-    response.headers.get("Retry-After"),
-  );
-  return clampRetryAfterSeconds(
+  const fromHeader = parseOpenSkyRetryAfterSecondsFromResponse(response);
+  return clampOpenSkyRetryAfterSeconds(
     fromHeader ?? defaultRetrySecondsForCode(code),
   );
 }

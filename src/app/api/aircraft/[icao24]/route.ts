@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 
-import {
-  getAircraftStateByIcao24,
-  normaliseIcao24Param,
-} from "@/services/opensky";
+import { getAircraftStateByIcao24ForCurrentMode } from "@/services/flight-data";
+import { normaliseIcao24Param } from "@/services/opensky";
 import { isOpenSkyRequestError } from "@/services/opensky-errors";
 import type { SingleAircraftApiResponse } from "@/types/aircraft-api";
 
@@ -26,7 +24,7 @@ export async function GET(
   }
 
   try {
-    const state = await getAircraftStateByIcao24(normalized);
+    const state = await getAircraftStateByIcao24ForCurrentMode(normalized);
 
     if (!state) {
       return NextResponse.json<SingleAircraftApiResponse>(

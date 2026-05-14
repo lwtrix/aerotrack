@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 
+import { isMockFlightDataMode } from "@/config/env";
+import { getLiveAircraftStatesForCurrentMode } from "@/services/flight-data";
 import type { OpenSkyFailureCode } from "@/services/opensky-errors";
 import {
   isOpenSkyRequestError,
   OpenSkyRequestError,
 } from "@/services/opensky-errors";
-import { getLiveAircraftStates } from "@/services/opensky";
 import type { LiveFlightsApiResponse } from "@/types/live-flights";
 
 const LIVE_ERROR_MESSAGES: Record<OpenSkyFailureCode, string> = {
@@ -34,7 +35,20 @@ function devForcedOpenSkyError(
   }
 
   if (force === "rate_limited") {
-    return new OpenSkyRequestError("dev", "rate_limited", { httpStatus: 429 });
+    const retryRaw = new URL(request.url).searchParams.get(
+      "retry_after_seconds",
+    );
+    const retryParsed = retryRaw
+      ? Number.parseInt(retryRaw.trim(), 10)
+      : Number.NaN;
+    const retryAfterSeconds =
+      Number.isFinite(retryParsed) && retryParsed > 0
+        ? retryParsed
+        : undefined;
+    return new OpenSkyRequestError("dev", "rate_limited", {
+      httpStatus: 429,
+      retryAfterSeconds,
+    });
   }
   if (force === "forbidden") {
     return new OpenSkyRequestError("dev", "forbidden", { httpStatus: 403 });
@@ -64,19 +78,31 @@ function liveFlightsErrorResponse(error: OpenSkyRequestError) {
 }
 
 export async function GET(request: Request) {
+  if (isMockFlightDataMode()) {
+    const aircraft = await getLiveAircraftStatesForCurrentMode();
+    return NextResponse.json({
+      success: true,
+      count: aircraft.length,
+      updatedAt: new Date().toISOString(),
+      data: aircraft,
+      refreshIntervalMs: 5_000,
+    });
+  }
+
   const forced = devForcedOpenSkyError(request);
   if (forced) {
     return liveFlightsErrorResponse(forced);
   }
 
   try {
-    const aircraft = await getLiveAircraftStates();
+    const aircraft = await getLiveAircraftStatesForCurrentMode();
 
     return NextResponse.json({
       success: true,
       count: aircraft.length,
       updatedAt: new Date().toISOString(),
       data: aircraft,
+      refreshIntervalMs: 30_000,
     });
   } catch (error) {
     if (isOpenSkyRequestError(error)) {

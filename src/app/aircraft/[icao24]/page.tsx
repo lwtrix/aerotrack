@@ -8,11 +8,9 @@ import { AircraftProfileCard } from "@/components/aircraft/AircraftProfileCard";
 import { AircraftStateDetails } from "@/components/aircraft/AircraftStateDetails";
 import { Button } from "@/components/ui/button";
 import { getAircraftProfileByIcao24 } from "@/services/aircraft-profile";
+import { getAircraftStateByIcao24ForCurrentMode } from "@/services/flight-data";
 import { isOpenSkyRequestError } from "@/services/opensky-errors";
-import {
-  getAircraftStateByIcao24,
-  normaliseIcao24Param,
-} from "@/services/opensky";
+import { normaliseIcao24Param } from "@/services/opensky";
 import type { AircraftState } from "@/types/aircraft";
 
 type AircraftDetailsPageProps = {
@@ -60,7 +58,7 @@ export default async function AircraftDetailsPage({
   let state: AircraftState | null = null;
 
   try {
-    state = await getAircraftStateByIcao24(normalized);
+    state = await getAircraftStateByIcao24ForCurrentMode(normalized);
   } catch (error) {
     liveError = true;
     if (!isOpenSkyRequestError(error)) {

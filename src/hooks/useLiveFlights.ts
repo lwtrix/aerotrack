@@ -8,8 +8,10 @@ export type LiveFlightsStatus = "loading" | "error" | "empty" | "success";
 
 const SUCCESS_POLL_MS = 30_000;
 const MANUAL_RETRY_THROTTLE_MS = 5_000;
+/** Longer gap for manual refresh while rate-limited to avoid hammering the API. */
+const RATE_LIMIT_MANUAL_THROTTLE_MS = 20_000;
 const ERROR_BACKOFF_MIN_MS = 120_000;
-const ERROR_BACKOFF_MAX_MS = 600_000;
+const ERROR_BACKOFF_MAX_MS = 86_400_000;
 
 type FetchOptions = {
   silent: boolean;
@@ -35,6 +37,28 @@ function readErrorBackoffMs(body: LiveFlightsApiResponse | null): number {
   );
 }
 
+const REFRESH_INTERVAL_MIN_MS = 1_000;
+const REFRESH_INTERVAL_MAX_MS = 60_000;
+
+/** Success-path poll interval from API; invalid or missing uses 30s. */
+function readSuccessRefreshIntervalMs(
+  body: LiveFlightsApiResponse,
+): number {
+  if (body.success !== true) {
+    return SUCCESS_POLL_MS;
+  }
+  const raw = body.refreshIntervalMs;
+  if (
+    typeof raw === "number" &&
+    Number.isFinite(raw) &&
+    raw >= REFRESH_INTERVAL_MIN_MS &&
+    raw <= REFRESH_INTERVAL_MAX_MS
+  ) {
+    return raw;
+  }
+  return SUCCESS_POLL_MS;
+}
+
 export function useLiveFlights() {
   const [aircraft, setAircraft] = useState<AircraftState[]>([]);
   const [count, setCount] = useState(0);
@@ -49,6 +73,7 @@ export function useLiveFlights() {
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(false);
   const lastManualRetryMsRef = useRef(0);
+  const lastErrorCodeRef = useRef<string | null>(null);
   const performFetchRef = useRef<(options: FetchOptions) => Promise<void>>(
     async () => {},
   );
@@ -109,6 +134,17 @@ export function useLiveFlights() {
           if (!mountedRef.current) {
             return;
           }
+          if (
+            body &&
+            "success" in body &&
+            body.success === false &&
+            "code" in body &&
+            typeof body.code === "string"
+          ) {
+            lastErrorCodeRef.current = body.code;
+          } else {
+            lastErrorCodeRef.current = null;
+          }
           setErrorMessage(message);
           setStatus("error");
           nextDelayMsRef.current = readErrorBackoffMs(body);
@@ -139,6 +175,7 @@ export function useLiveFlights() {
           if (!mountedRef.current) {
             return;
           }
+          lastErrorCodeRef.current = body.code;
           setErrorMessage(body.message);
           setStatus("error");
           nextDelayMsRef.current = readErrorBackoffMs(body);
@@ -166,7 +203,8 @@ export function useLiveFlights() {
         }
 
         hadSuccessRef.current = true;
-        nextDelayMsRef.current = SUCCESS_POLL_MS;
+        lastErrorCodeRef.current = null;
+        nextDelayMsRef.current = readSuccessRefreshIntervalMs(body);
 
         const nextAircraft = body.data;
         const nextCount = body.count;
@@ -225,7 +263,11 @@ export function useLiveFlights() {
 
   const refetch = useCallback(() => {
     const now = Date.now();
-    if (now - lastManualRetryMsRef.current < MANUAL_RETRY_THROTTLE_MS) {
+    const manualThrottle =
+      lastErrorCodeRef.current === "rate_limited"
+        ? RATE_LIMIT_MANUAL_THROTTLE_MS
+        : MANUAL_RETRY_THROTTLE_MS;
+    if (now - lastManualRetryMsRef.current < manualThrottle) {
       return;
     }
     if (inFlightRef.current) {
