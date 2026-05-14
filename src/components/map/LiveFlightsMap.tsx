@@ -2,8 +2,17 @@
 
 import "leaflet/dist/leaflet.css";
 
-import { MapContainer, TileLayer, CircleMarker, Popup } from "react-leaflet";
+import L from "leaflet";
+import { useEffect, useRef } from "react";
+import {
+  CircleMarker,
+  MapContainer,
+  Popup,
+  TileLayer,
+  useMap,
+} from "react-leaflet";
 
+import { USER_MAP_VIEW_RADIUS_MILES } from "@/hooks/useBrowserGeolocation";
 import type { AircraftState } from "@/types/aircraft";
 import { MAX_VISIBLE_AIRCRAFT_MARKERS_ON_MAP } from "@/types/live-flights";
 
@@ -12,6 +21,37 @@ const DEFAULT_ZOOM = 3;
 
 const METERS_TO_FEET = 3.280_839_895;
 const MS_TO_KNOTS = 1.943_844_494;
+
+function boundsForRadiusMiles(
+  centerLat: number,
+  centerLng: number,
+  radiusMiles: number,
+): L.LatLngBounds {
+  const latitudeRadians = (centerLat * Math.PI) / 180;
+  const cosLat = Math.max(Math.abs(Math.cos(latitudeRadians)), 0.08);
+  const deltaLatDegrees = radiusMiles / 69;
+  const deltaLngDegrees = radiusMiles / (69 * cosLat);
+  const south = Math.max(-90, centerLat - deltaLatDegrees);
+  const north = Math.min(90, centerLat + deltaLatDegrees);
+  const west = centerLng - deltaLngDegrees;
+  const east = centerLng + deltaLngDegrees;
+  return L.latLngBounds(L.latLng(south, west), L.latLng(north, east));
+}
+
+function UserLocationFitOnce({ lat, lng }: { lat: number; lng: number }) {
+  const map = useMap();
+  const hasFittedRef = useRef(false);
+
+  useEffect(() => {
+    if (hasFittedRef.current) return;
+    hasFittedRef.current = true;
+
+    const bounds = boundsForRadiusMiles(lat, lng, USER_MAP_VIEW_RADIUS_MILES);
+    map.fitBounds(bounds, { padding: [24, 24] });
+  }, [map, lat, lng]);
+
+  return null;
+}
 
 function formatAltitude(aircraft: AircraftState): string {
   const meters = aircraft.baroAltitude ?? aircraft.geoAltitude;
@@ -65,9 +105,10 @@ function AircraftPopupContent({ aircraft }: { aircraft: AircraftState }) {
 
 type LiveFlightsMapProps = {
   aircraft: AircraftState[];
+  userLocation: { lat: number; lng: number } | null;
 };
 
-export function LiveFlightsMap({ aircraft }: LiveFlightsMapProps) {
+export function LiveFlightsMap({ aircraft, userLocation }: LiveFlightsMapProps) {
   const visible = aircraft.slice(0, MAX_VISIBLE_AIRCRAFT_MARKERS_ON_MAP);
 
   return (
@@ -77,6 +118,9 @@ export function LiveFlightsMap({ aircraft }: LiveFlightsMapProps) {
       className="h-full w-full z-0 [&_.leaflet-container]:h-full [&_.leaflet-container]:w-full"
       scrollWheelZoom
     >
+      {userLocation ? (
+        <UserLocationFitOnce lat={userLocation.lat} lng={userLocation.lng} />
+      ) : null}
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"

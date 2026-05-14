@@ -3,6 +3,7 @@
 import { LiveFlightsMap } from "@/components/map/LiveFlightsMap";
 import { MapStatusPanel } from "@/components/map/MapStatusPanel";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useBrowserGeolocation } from "@/hooks/useBrowserGeolocation";
 import { useLiveFlights } from "@/hooks/useLiveFlights";
 
 export default function LiveMapSection() {
@@ -16,6 +17,8 @@ export default function LiveMapSection() {
     refetch,
   } = useLiveFlights();
 
+  const { locationMessage, userLocation } = useBrowserGeolocation();
+
   const showMap = status === "success" || status === "empty";
 
   return (
@@ -27,11 +30,12 @@ export default function LiveMapSection() {
         count={count}
         updatedAt={updatedAt}
         onRetry={refetch}
+        locationMessage={locationMessage}
       />
 
       <div className="h-[560px] w-full overflow-hidden rounded-xl ring-1 ring-foreground/10">
         {showMap ? (
-          <LiveFlightsMap aircraft={aircraft} />
+          <LiveFlightsMap aircraft={aircraft} userLocation={userLocation} />
         ) : status === "error" ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 bg-muted/30 p-6 text-center text-sm text-muted-foreground">
             <p>The map loads once live flight data is available.</p>

@@ -19,6 +19,7 @@ type MapStatusPanelProps = {
   count: number;
   updatedAt: string | null;
   onRetry: () => void;
+  locationMessage: string;
 };
 
 export function MapStatusPanel({
@@ -28,6 +29,7 @@ export function MapStatusPanel({
   count,
   updatedAt,
   onRetry,
+  locationMessage,
 }: MapStatusPanelProps) {
   const capped = count > MAX_VISIBLE_AIRCRAFT_MARKERS_ON_MAP;
   const visible = Math.min(count, MAX_VISIBLE_AIRCRAFT_MARKERS_ON_MAP);
@@ -97,6 +99,9 @@ export function MapStatusPanel({
           </div>
         ) : null}
 
+        <p className="border-t border-border pt-3 text-xs text-muted-foreground">
+          {locationMessage}
+        </p>
       </CardContent>
     </Card>
   );
