@@ -1,4 +1,11 @@
 import type { AircraftState } from "@/types/aircraft";
+import {
+  OpenSkyRequestError,
+  defaultRetrySecondsForCode,
+  isOpenSkyRequestError,
+  parseRetryAfterHeaderSeconds,
+  clampRetryAfterSeconds,
+} from "@/services/opensky-errors";
 
 type OpenSkyResponse = {
   time: number;
@@ -6,6 +13,7 @@ type OpenSkyResponse = {
 };
 
 const ICAO24_HEX = /^[0-9a-f]{6}$/i;
+const OPEN_SKY_FETCH_TIMEOUT_MS = 15_000;
 
 function normalizeStateVector(state: unknown[]): AircraftState {
   return {
@@ -35,6 +43,136 @@ function normalizeAllStates(data: OpenSkyResponse): AircraftState[] {
   return data.states.map(normalizeStateVector);
 }
 
+function mergeRetryWithHeader(
+  code: Parameters<typeof defaultRetrySecondsForCode>[0],
+  response: Response,
+): number {
+  const fromHeader = parseRetryAfterHeaderSeconds(
+    response.headers.get("Retry-After"),
+  );
+  return clampRetryAfterSeconds(
+    fromHeader ?? defaultRetrySecondsForCode(code),
+  );
+}
+
+function openSkyErrorFromHttpResponse(response: Response): OpenSkyRequestError {
+  const status = response.status;
+  const httpStatus = status;
+
+  if (status === 429) {
+    return new OpenSkyRequestError("OpenSky rate limit.", "rate_limited", {
+      httpStatus,
+      retryAfterSeconds: mergeRetryWithHeader("rate_limited", response),
+    });
+  }
+  if (status === 401 || status === 403) {
+    return new OpenSkyRequestError("OpenSky access denied.", "forbidden", {
+      httpStatus,
+      retryAfterSeconds: mergeRetryWithHeader("forbidden", response),
+    });
+  }
+  if (status === 400) {
+    return new OpenSkyRequestError("OpenSky rejected the request.", "bad_request", {
+      httpStatus,
+      retryAfterSeconds: mergeRetryWithHeader("bad_request", response),
+    });
+  }
+  if (status >= 500 && status <= 599) {
+    return new OpenSkyRequestError(
+      "OpenSky server error.",
+      "upstream_unavailable",
+      {
+        httpStatus,
+        retryAfterSeconds: mergeRetryWithHeader("upstream_unavailable", response),
+      },
+    );
+  }
+
+  return new OpenSkyRequestError(
+    "Unexpected OpenSky response.",
+    "upstream_unavailable",
+    {
+      httpStatus,
+      retryAfterSeconds: mergeRetryWithHeader("upstream_unavailable", response),
+    },
+  );
+}
+
+function mapUnknownFetchError(error: unknown): OpenSkyRequestError {
+  if (isOpenSkyRequestError(error)) {
+    return error;
+  }
+  if (
+    error &&
+    typeof error === "object" &&
+    "name" in error &&
+    (error.name === "AbortError" || error.name === "TimeoutError")
+  ) {
+    return new OpenSkyRequestError("OpenSky request timed out.", "timeout", {
+      retryAfterSeconds: defaultRetrySecondsForCode("timeout"),
+    });
+  }
+  return new OpenSkyRequestError(
+    "Unable to reach OpenSky.",
+    "network_error",
+    {
+      retryAfterSeconds: defaultRetrySecondsForCode("network_error"),
+    },
+  );
+}
+
+async function fetchOpenSkyJson(
+  url: string,
+  init: { next?: { revalidate?: number }; cache?: RequestCache },
+): Promise<OpenSkyResponse> {
+  try {
+    const signal = AbortSignal.timeout(OPEN_SKY_FETCH_TIMEOUT_MS);
+    const response = await fetch(url, {
+      ...init,
+      signal,
+    });
+
+    if (!response.ok) {
+      throw openSkyErrorFromHttpResponse(response);
+    }
+
+    let data: unknown;
+    try {
+      data = await response.json();
+    } catch {
+      throw new OpenSkyRequestError(
+        "Invalid JSON from OpenSky.",
+        "upstream_unavailable",
+        {
+          httpStatus: response.status,
+          retryAfterSeconds: mergeRetryWithHeader(
+            "upstream_unavailable",
+            response,
+          ),
+        },
+      );
+    }
+
+    if (!data || typeof data !== "object") {
+      throw new OpenSkyRequestError(
+        "Unexpected OpenSky payload.",
+        "upstream_unavailable",
+        {
+          httpStatus: response.status,
+          retryAfterSeconds: mergeRetryWithHeader(
+            "upstream_unavailable",
+            response,
+          ),
+        },
+      );
+    }
+
+    return data as OpenSkyResponse;
+  } catch (error) {
+    throw mapUnknownFetchError(error);
+  }
+}
+
 export function normaliseIcao24Param(icao24: string): string | null {
   const trimmed = icao24.trim().toLowerCase();
   if (!ICAO24_HEX.test(trimmed)) {
@@ -44,17 +182,14 @@ export function normaliseIcao24Param(icao24: string): string | null {
 }
 
 export async function getLiveAircraftStates(): Promise<AircraftState[]> {
-  const response = await fetch("https://opensky-network.org/api/states/all", {
-    next: {
-      revalidate: 30,
+  const data = await fetchOpenSkyJson(
+    "https://opensky-network.org/api/states/all",
+    {
+      next: {
+        revalidate: 30,
+      },
     },
-  });
-
-  if (!response.ok) {
-    throw new Error(`OpenSky API error: ${response.status}`);
-  }
-
-  const data = (await response.json()) as OpenSkyResponse;
+  );
 
   return normalizeAllStates(data).filter(
     (aircraft) =>
@@ -65,7 +200,7 @@ export async function getLiveAircraftStates(): Promise<AircraftState[]> {
 /**
  * Fetches the latest state vector for one aircraft from OpenSky.
  * Returns null when OpenSky has no matching state rows.
- * Throws on HTTP/network failures (upstream errors).
+ * Throws OpenSkyRequestError on HTTP/network failures.
  */
 export async function getAircraftStateByIcao24(
   icao24: string,
@@ -78,15 +213,10 @@ export async function getAircraftStateByIcao24(
   const url = new URL("https://opensky-network.org/api/states/all");
   url.searchParams.set("icao24", normalized);
 
-  const response = await fetch(url.toString(), {
+  const data = await fetchOpenSkyJson(url.toString(), {
     cache: "no-store",
   });
 
-  if (!response.ok) {
-    throw new Error(`OpenSky API error: ${response.status}`);
-  }
-
-  const data = (await response.json()) as OpenSkyResponse;
   const states = normalizeAllStates(data);
   if (states.length === 0) {
     return null;

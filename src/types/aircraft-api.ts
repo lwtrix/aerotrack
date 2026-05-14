@@ -15,6 +15,7 @@ export type SingleAircraftApiError = {
   success: false;
   code: SingleAircraftErrorCode;
   message: string;
+  retryAfterSeconds?: number;
 };
 
 export type SingleAircraftApiResponse =

@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
-import { getAircraftStateByIcao24, normaliseIcao24Param } from "@/services/opensky";
+import {
+  getAircraftStateByIcao24,
+  normaliseIcao24Param,
+} from "@/services/opensky";
+import { isOpenSkyRequestError } from "@/services/opensky-errors";
 import type { SingleAircraftApiResponse } from "@/types/aircraft-api";
 
 export async function GET(
@@ -44,14 +48,30 @@ export async function GET(
       },
       { status: 200 },
     );
-  } catch {
+  } catch (error) {
+    if (isOpenSkyRequestError(error)) {
+      console.error("OpenSky aircraft error:", error.code, error.httpStatus);
+      return NextResponse.json<SingleAircraftApiResponse>(
+        {
+          success: false,
+          code: "upstream_error",
+          message: "Live aircraft state is temporarily unavailable.",
+          retryAfterSeconds: error.retryAfterSeconds,
+        },
+        { status: 503 },
+      );
+    }
+
+    console.error("Unexpected aircraft API error:", error);
+
     return NextResponse.json<SingleAircraftApiResponse>(
       {
         success: false,
         code: "upstream_error",
-        message: "Unable to retrieve aircraft state right now.",
+        message: "Live aircraft state is temporarily unavailable.",
+        retryAfterSeconds: 120,
       },
-      { status: 502 },
+      { status: 503 },
     );
   }
 }
